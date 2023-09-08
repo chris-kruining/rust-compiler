@@ -1,10 +1,11 @@
+use std::{iter::Peekable, fmt::Debug};
 use itertools::structs::MultiPeek;
-use crate::lexer::Tokenizable;
+use crate::lexer::{Tokenizable, Token};
 use strum_macros::EnumIter;
 use regex::Regex;
 
 #[derive(Default, EnumIter, Debug, Clone, Copy, PartialEq)]
-pub enum Token {
+pub enum TokenSpecification {
     // Symbols
     SemiColon,
     Equals,
@@ -55,7 +56,7 @@ const IDENTIFIER_PATTERN: &str = r"[_a-zA-Z][_a-zA-Z\d]*";
 const NUMBER_PATTERN: &str = r"-?[\d_.,]+";
 const WHITE_SPACE_PATTERN: &str = r"\s+";
 
-impl Tokenizable for Token {    
+impl Tokenizable for TokenSpecification {    
     fn claim(&self, buffer: &mut MultiPeek<impl Iterator<Item = char>>) -> Option<String> {
         match self {
             // Handle exact 1 to 1 matchtes
@@ -162,35 +163,134 @@ fn match_string(buffer: &mut MultiPeek<impl Iterator<Item = char>>) -> Option<St
     Some(result)
 }
 
-// #[derive(Debug)]
-// pub enum Grammer {
-//     Program(Vec<Statement>),
-//     Statement(Statement),
-//     Expression(Expression),
-// }
+enum Pattern<Token, Node> {
+    Node(Node),
+    Token(Token),
+    Nested(Vec<Pattern<Token, Node>>),
+}
 
-// #[derive(Debug)]
-// enum Statement {
-//     Exit(Exit),
-//     Decleration(Decleration)
-// }
+impl<T: Debug + PartialEq, N> Pattern<T, N> {
+    fn is_match(tokens: &mut Peekable<impl Iterator<Item = Token<T>>>, pattern: Vec<Pattern<T, N>>) -> Option<Vec<AstNode>> {
+        let length = pattern.len();
+        let result = pattern.into_iter().map(|s| s.consume(tokens)).filter_map(|step| step).collect::<Vec<_>>();
+    
+        if length != result.len() {
+            return None;
+        }
+        
+        Some(result)
+    }
 
-// #[derive(Debug)]
-// enum Expression {
-//     Number(String),
-//     Identifier(Identifier),
-// }
+    fn consume(&self, tokens: &mut impl Iterator<Item = Token<T>>) -> Option<AstNode> {
+        match self {
+            Pattern::Node(node) => self.node(node, tokens),
+            Pattern::Token(kind) => self.token(kind, tokens),
+            _ => None,
+        }
+    }
 
-// #[derive(Debug)]
-// struct Exit {
-//     value: Expression,
-// }
+    fn node(&self, _node: &N, tokens: &mut dyn Iterator<Item = Token<T>>) -> Option<AstNode> {
+        let Some(token) = tokens.next() else {
+            return None;
+        };
+        
+        Some(AstNode::Expression(Expression::Number(token.value)))
+    }
+    
+    fn token(&self, kind: &T, tokens: &mut dyn Iterator<Item = Token<T>>) -> Option<AstNode> {
+        let Some(token) = tokens.next() else {
+            return None;
+        };
+    
+        if &token.kind != kind {
+            return None;
+        }
+    
+        println!("{}:{} {:?}({:?})", token.line, token.column, token.kind, token.value);
+    
+        Some(AstNode::Token(token.value))
+    }
+}
 
-// #[derive(Debug)]
-// struct Decleration {
-//     name: String,
-//     value: Expression
-// }
+#[derive(Debug)]
+pub enum AstNode {
+    Program { statements: Vec<Statement> },
+    Expression(Expression),
+    Token(String),
+}
 
-// #[derive(Debug)]
-// struct Identifier {}
+impl AstNode {
+    pub fn parse(tokens: &mut impl Iterator<Item = Token<TokenSpecification>>) -> Option<Self> {
+        let mut it = tokens.peekable();
+
+        program(&mut it)
+    }
+}
+
+fn program(tokens: &mut Peekable<impl Iterator<Item = Token<TokenSpecification>>>) -> Option<AstNode> {
+    let mut statements = vec![];
+
+    while let Some(_) = tokens.peek() {
+        match statement(tokens) {
+            Some(statement) => statements.push(statement),
+            None => return None,
+        }
+    }
+
+    Some(AstNode::Program { statements: statements })
+}
+
+fn statement(tokens: &mut Peekable<impl Iterator<Item = Token<TokenSpecification>>>) -> Option<Statement> {
+    let Some(token) = tokens.peek() else {
+        return None;
+    };
+
+    match token.kind {
+        TokenSpecification::Let => declaration(tokens),
+        _ => None,
+    }
+}
+
+enum G {
+    Expression
+}
+
+fn declaration(tokens: &mut Peekable<impl Iterator<Item = Token<TokenSpecification>>>) -> Option<Statement> {
+    type T = TokenSpecification;
+    type P = Pattern<T, G>;
+
+    let pattern = vec![P::Token(T::Let), P::Token(T::Identifier), P::Token(T::Equals), P::Node(G::Expression), P::Token(T::SemiColon)];
+
+    let Some(result) = Pattern::is_match(tokens, pattern) else {
+        return None;
+    };
+
+    let [ _, nameNode, _, valueNode, _] = result.as_slice() else {
+        return None;
+    };
+
+    let AstNode::Token(name) = nameNode else {
+        return None;
+    };
+
+    let AstNode::Expression(value) = valueNode else {
+        return None;
+    };
+
+    Some(Statement::Decleration{ name: name.to_owned(), value: value.clone() })
+}
+
+#[derive(Debug, Clone)]
+enum Statement {
+    Exit { value: Expression },
+    Decleration { name: String, value: Expression },
+}
+
+#[derive(Debug, Clone)]
+enum Expression {
+    Number(String),
+    Identifier { name: String },
+}
+
+#[derive(Debug)]
+struct Exit;

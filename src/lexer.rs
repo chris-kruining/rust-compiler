@@ -7,23 +7,24 @@ pub trait Tokenizable {
     fn claim(&self, buffer: &mut MultiPeek<impl Iterator<Item = char>>) -> Option<String>;
 }
 
-pub struct Tokenizer<'a, Kind> {
+pub struct Tokenizer<'a, I: Iterator<Item = char>, Kind> {
     _marker: PhantomData<Kind>,
+    _it: PhantomData<&'a I>,
 
     faulted: bool,
     start: usize,
     line: usize,
     column: usize,
-    it: MultiPeek<std::str::Chars<'a>>,
+    it: MultiPeek<I>,
 }
 
-impl<'a, Kind> Tokenizer<'a, Kind> {
-    pub fn new(input: &'a str) -> Self {
-        Self { _marker: Default::default(), faulted: false, start: 0, line: 0, column: 0, it: multipeek(input.chars()) }
+impl<'a, I: Iterator<Item = char>, Kind> Tokenizer<'a, I, Kind> {
+    pub fn new(input: I) -> Self {
+        Self { _marker: Default::default(), _it: Default::default(), faulted: false, start: 0, line: 0, column: 0, it: multipeek(input) }
     }
 }
 
-impl<'a, Kind: Tokenizable + IntoEnumIterator> Iterator for Tokenizer<'a, Kind> {
+impl<'a, I: Iterator<Item = char>, Kind: Tokenizable + IntoEnumIterator> Iterator for Tokenizer<'a, I, Kind> {
     type Item = Result<Token<Kind>, Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -40,9 +41,7 @@ impl<'a, Kind: Tokenizable + IntoEnumIterator> Iterator for Tokenizer<'a, Kind> 
             },
 
             // End reached
-            Ok(None) => {
-                None
-            },
+            Ok(None) => None,
             
             Ok(Some((kind, value))) => {
                 let length = value.len();
@@ -56,8 +55,8 @@ impl<'a, Kind: Tokenizable + IntoEnumIterator> Iterator for Tokenizer<'a, Kind> 
     }
 }
 
-pub fn tokenize<'a, Kind: Tokenizable + Default + IntoEnumIterator + 'a>(input: &'a str) -> impl Iterator<Item = Result<Token<Kind>, Error>> + 'a {
-    Tokenizer::new(input)
+pub fn tokenize<'a, I: Iterator<Item = char> + 'a, Kind: Tokenizable + Default + IntoEnumIterator + 'a>(input: I) -> impl Iterator<Item = Result<Token<Kind>, Error>> + 'a {
+    Tokenizer::<I, Kind>::new(input)
 }
 
 fn next<Kind: Tokenizable + IntoEnumIterator>(it: &mut MultiPeek<impl Iterator<Item = char>>) -> Result<Option<(Kind, String)>, Error> {
@@ -69,7 +68,7 @@ fn next<Kind: Tokenizable + IntoEnumIterator>(it: &mut MultiPeek<impl Iterator<I
         it.reset_peek();
 
         if let Some(value) = candidate.claim(it) {
-            return Ok(Some((candidate, value)))
+            return Ok(Some((candidate, value)));
         }
     }
     
